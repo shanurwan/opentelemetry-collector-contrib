@@ -50,6 +50,14 @@ exporters:
 
 If you are migrating from a pipeline that uses the standalone `batch` processor, remove `batch` from the pipeline's `processors` list and configure `sending_queue.batch` instead. For durability across restarts, also set `sending_queue.storage` to a [storage extension](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/storage/filestorage) so queued batches survive a crash (at-least-once delivery).
 
+**Delivery during ClickHouse outages**
+
+Three settings decide whether data survives a period when ClickHouse is unavailable. The figures below were measured with collector v0.165.0 and ClickHouse 25.8, using the batching configuration above, a unique ID on every log record, and a count of rows in ClickHouse afterwards.
+
+- `retry_on_failure.max_elapsed_time` (default 300s) limits how long one batch is retried. A batch that is still failing after that is dropped, even if the queue has room. With ClickHouse stopped for 6 minutes at 500 log records/s, 28,500 of 210,000 records were dropped (counted in `otelcol_exporter_send_failed_log_records`) while the queue never filled; a 60-second outage lost nothing. With `max_elapsed_time: 0` (retry until success) the same 6-minute outage lost nothing, and `queue_size` still bounds memory. A batch that keeps failing with an error that is not marked permanent (for example [#52365](https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/52365)) is then retried indefinitely, so watch `otelcol_exporter_queue_size`.
+- `sending_queue.storage`: without it the queue is in memory. When the collector was killed (`kill -9`) during a 60-second outage, all 120,000 records it had accepted were lost. With `storage` set to a `file_storage` extension, all 120,000 were inserted after the restart, without duplicates.
+- `create_schema` (default true) creates the database and tables in `start`, so ClickHouse must be reachable when the collector starts. If it is not, the collector exits, including pipelines that do not use ClickHouse. With `create_schema: false` and the tables created beforehand, the collector started while ClickHouse was down and inserted all 60,000 records it accepted once ClickHouse came back.
+
 ## Visualization Tools
 
 #### Official ClickHouse Plugin for Grafana
